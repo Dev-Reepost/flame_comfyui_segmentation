@@ -1,0 +1,93 @@
+{
+  "1": {
+    "inputs": {
+      "filepath": "",
+      "linear_to_sRGB": "true",
+      "image_load_cap": 0,
+      "skip_first_images": 0,
+      "select_every_nth": 1
+    },
+    "class_type": "LoadEXR",
+    "_meta": {
+      "title": "Load EXR"
+    }
+  },
+  "16": {
+    "inputs": {
+      "prompt": "foreground",
+      "threshold": 0.3,
+      "sam_model": ["18", 0],
+      "grounding_dino_model": ["17", 0],
+      "image": ["1", 0]
+    },
+    "class_type": "GroundingDinoSAMSegment (segment anything)",
+    "_meta": {
+      "title": "GroundingDinoSAMSegment (segment anything)"
+    }
+  },
+  "17": {
+    "inputs": {
+      "model_name": "GroundingDINO_SwinT_OGC (694MB)"
+    },
+    "class_type": "GroundingDinoModelLoader (segment anything)",
+    "_meta": {
+      "title": "GroundingDinoModelLoader (segment anything)"
+    }
+  },
+  "18": {
+    "inputs": {
+      "model_name": "sam_vit_h (2.56GB)"
+    },
+    "class_type": "SAMModelLoader (segment anything)",
+    "_meta": {
+      "title": "SAMModelLoader (segment anything)"
+    }
+  },
+  "20": {
+    "inputs": {
+      "mask": ["16", 1]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image"
+    }
+  },
+  "23": {
+    "inputs": {
+      "filename_prefix": "OutMatte",
+      "sRGB_to_linear": "true",
+      "version": 1,
+      "start_frame": 0,
+      "frame_pad": 4,
+      "images": ["20", 0]
+    },
+    "class_type": "SaveEXR",
+    "_meta": {
+      "title": "Save EXR"
+    }
+  },
+  "24": {
+    "inputs": {
+      "resolution": 1080,
+      "image": ["1", 0]
+    },
+    "class_type": "SAMPreprocessor",
+    "_meta": {
+      "title": "SAM Segmentor"
+    }
+  },
+  "27": {
+    "inputs": {
+      "filename_prefix": "Result",
+      "sRGB_to_linear": "true",
+      "version": 1,
+      "start_frame": 0,
+      "frame_pad": 4,
+      "images": ["24", 0]
+    },
+    "class_type": "SaveEXR",
+    "_meta": {
+      "title": "Save EXR"
+    }
+  }
+}
