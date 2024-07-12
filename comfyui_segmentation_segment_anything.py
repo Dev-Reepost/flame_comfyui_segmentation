@@ -3,7 +3,7 @@
 # Filename: comfyui_segmentation.py
 #
 # Author: Julien Martin
-# Created: 2024
+# Created: 2024-03
 #
 ###########################################################################
 
@@ -14,18 +14,16 @@ import json
 import webbrowser
 from enum import Enum
 from pathlib import Path
-from pprint import pprint
 
 import pybox_v1 as pybox
 import pybox_comfyui
 
 from comfyui_client import COMFYUI_WORKING_DIR
-from comfyui_client import COMFYUI_WORKFLOWS_DIR
 from comfyui_client import find_models
 
 from pybox_comfyui import DEFAULT_IMAGE_HEIGHT
+from pybox_comfyui import DEFAULT_IMAGE_WIDTH
 from pybox_comfyui import IMAGE_HEIGHT_MAX
-from pybox_comfyui import UI_INCVER
 from pybox_comfyui import UI_INTERRUPT
 from pybox_comfyui import UI_PROMPT
 from pybox_comfyui import Color
@@ -35,10 +33,7 @@ from pybox_comfyui import PromptSign
 
 
 COMFYUI_WORKFLOW_NAME = "ComfyUI SAM"
-COMFYUI_OPERATOR_NAME = "segmentation"
-COMFYUI_WORKFLOW_DIR = str(Path(COMFYUI_WORKFLOWS_DIR) / COMFYUI_OPERATOR_NAME / "api")
-COMFYUI_WORKFLOW_FILENAME = "comfyui_segmentation_workflow_api.json"
-COMFYUI_WORKFLOW_PATH = str(Path(COMFYUI_WORKFLOW_DIR) / COMFYUI_WORKFLOW_FILENAME)
+COMFYUI_OPERATOR_NAME = "segmentation_segment_anything"
 
 COMFYUI_MODELS_SAM_DIR_PATHS = [
     str(Path(COMFYUI_WORKING_DIR) / "models" / "sams")
@@ -62,27 +57,30 @@ UI_MODELS_DINO_LIST = "DINO Model"
 UI_THRESHOLD = "Threshold"
 UI_SEGMENTRES = "Height"
 
+DEFAULT_PROMPT = "foreground"
 DEFAULT_THRESHOLD = 0.3
+DEFAULT_SAMSEGMENT_RES= 1080
 
 
 class ComfyUISAM(pybox_comfyui.ComfyUIBaseClass):
-    workflow_sam_matte_model_idx = -1
-    workflow_dino_model_idx = -1
-    workflow_sam_matte_idx = -1
-    workflow_sam_segmentor_idx = -1
-    
     operator_name = COMFYUI_OPERATOR_NAME
     operator_layers = [LayerIn.FRONT, LayerOut.RESULT, LayerOut.OUTMATTE]
+    
+    version = 1
     
     models_sam = []
     models_dino = []
     model_sam = ""
     model_dino = ""
-    prompt = ""
-    threshold = ""
-    samsegmentor_res = ""
     
-    init_cycle = True
+    prompt = DEFAULT_PROMPT
+    threshold = DEFAULT_THRESHOLD
+    samsegmentor_res = DEFAULT_SAMSEGMENT_RES 
+    
+    workflow_sam_matte_model_idx = -1
+    workflow_sam_matte_idx = -1
+    workflow_dino_model_idx = -1
+    workflow_sam_segmentor_idx = -1
     
     
     ###########################################################################
@@ -105,15 +103,14 @@ class ComfyUISAM(pybox_comfyui.ComfyUIBaseClass):
     def execute(self):
         super().execute()
         
-        if self.is_processing():
-            if self.out_socket_active():
-                self.submit_workflow()
+        if self.out_frame_requested():    
+            self.submit_workflow()
         
         if self.get_global_element_value(UI_INTERRUPT):
             self.interrupt_workflow()
 
         self.update_workflow_execution()
-        self.update_outputs()
+        self.update_outputs(layers=self.operator_layers)
     
     
     def teardown(self):
@@ -139,7 +136,7 @@ class ComfyUISAM(pybox_comfyui.ComfyUIBaseClass):
         
         col = 0
         self.set_ui_host_info(col)
-        self.set_ui_workflow_path(col, COMFYUI_WORKFLOW_DIR, COMFYUI_WORKFLOW_PATH)
+        self.set_ui_workflow_path(col, self.workflow_dir, self.workflow_path)
         
         col = 1
         # ComfyUI Segment Anything prompt conditioning
@@ -193,11 +190,11 @@ class ComfyUISAM(pybox_comfyui.ComfyUIBaseClass):
         # ComfyUI workflow actions
         self.ui_version_row = 0
         self.ui_version_col = col
-        self.set_ui_versions(row=0, col=col)
+        self.set_ui_versions()
         
-        self.set_ui_increment_version(col)
-        
-        self.set_ui_interrupt(col)
+        self.set_ui_increment_version(row=1, col=col)
+
+        self.set_ui_interrupt(row=2, col=col)
         
         self.ui_processing_color_row = 3
         self.ui_processing_color_col = col
@@ -205,7 +202,7 @@ class ComfyUISAM(pybox_comfyui.ComfyUIBaseClass):
     
     
     ###################################
-    # Helpers 
+    # Models 
     
     def set_models(self):
         sam_models = find_models(COMFYUI_MODELS_SAM_DIR_PATHS)
@@ -218,20 +215,24 @@ class ComfyUISAM(pybox_comfyui.ComfyUIBaseClass):
     # Workflow
     
     def load_workflow(self):
-        with open(COMFYUI_WORKFLOW_PATH) as f:
+        with open(self.workflow_path) as f:
             print("Loading Workflow")
             self.workflow = json.load(f)
             self.workflow_id_to_class_type = {id: details['class_type'] for id, details in self.workflow.items()}
+            # load & save 
             self.workflow_load_exr_front_idx = self.get_workflow_index('LoadEXR')
-            save_exr_nodes = [(key, self.workflow.get(key)["inputs"]) for key, value in self.workflow_id_to_class_type.items() if value == 'SaveEXR']
+            wf_ids_to_classes = self.workflow_id_to_class_type.items()
+            save_exr_nodes = [(key, self.workflow.get(key)["inputs"]) for key, value in wf_ids_to_classes if value == 'SaveEXR']
             self.workflow_save_exr_outmatte_idx = [key for (key, attr) in save_exr_nodes if attr["filename_prefix"] == "OutMatte"][0]
             self.workflow_save_exr_result_idx = [key for (key, attr) in save_exr_nodes if attr["filename_prefix"] == "Result"][0]
+            # models
             self.workflow_sam_matte_idx = self.get_workflow_index('GroundingDinoSAMSegment (segment anything)')
             self.workflow_sam_segmentor_idx = self.get_workflow_index('SAMPreprocessor')
             self.workflow_sam_matte_model_idx = self.workflow.get(self.workflow_sam_matte_idx)["inputs"]["sam_model"][0]
             self.workflow_dino_model_idx = self.workflow.get(self.workflow_sam_matte_idx)["inputs"]["grounding_dino_model"][0]
             self.model_sam = self.workflow.get(self.workflow_sam_matte_model_idx)["inputs"]["model_name"]
             self.model_dino = self.workflow.get(self.workflow_dino_model_idx)["inputs"]["model_name"]
+            # paramaters
             self.prompt = self.workflow.get(self.workflow_sam_matte_idx)["inputs"]["prompt"]
             self.threshold = self.workflow.get(self.workflow_sam_matte_idx)["inputs"]["threshold"]
             self.out_frame_pad = self.workflow.get(self.workflow_save_exr_outmatte_idx)["inputs"]["frame_pad"]
@@ -258,6 +259,8 @@ class ComfyUISAM(pybox_comfyui.ComfyUIBaseClass):
     
     def set_workflow_resolution(self):
         if self.workflow:  
+            socket_front = self.get_process_in_socket(0)
+            self.set_global_element_value(UI_SEGMENTRES, float(self.get_socket_height(socket_front))) 
             self.samsegmentor_res = int(self.get_global_element_value(UI_SEGMENTRES))
             self.workflow.get(self.workflow_sam_segmentor_idx)["inputs"]["resolution"] = self.samsegmentor_res
             print(f'Workflow Segmentation resolution: {self.samsegmentor_res}')

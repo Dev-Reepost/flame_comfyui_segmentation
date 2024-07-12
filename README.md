@@ -1,6 +1,6 @@
-# ComfyUI Segmentation Autodesk Flame Pybox Batch Node
+# ComFlameUI Segmentation
 
-An Autodesk Pybox handler for ComfyUI Segment Anything workflow
+An Autodesk Pybox handler integrating a ComfyUI Segment Anything workflow
 
 ## Inputs
 
